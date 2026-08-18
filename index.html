@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>全国ライブカメラMAP</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  #map { position:absolute; top:0; bottom:0; left:0; right:0; }
+
+  /* PC用フィルターパネル */
+  #filterPanel {
+    position:absolute; top:10px; left:10px; z-index:10;
+    background:#fff; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,.25);
+    padding:10px; width:220px; font-size:13px;
+  }
+  #filterPanel h1 { font-size:14px; margin:0 0 8px; }
+  .catBtn {
+    display:flex; align-items:center; gap:6px; padding:5px 6px; margin-bottom:3px;
+    border-radius:5px; cursor:pointer; user-select:none; border:1px solid transparent;
+  }
+  .catBtn.on { background:#e8f0fe; border-color:#1a73e8; }
+  .catBtn .cnt { margin-left:auto; color:#888; font-size:11px; }
+  #markerCount { margin-top:8px; font-size:11px; color:#666; }
+  #zoom-msg {
+    display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    background:rgba(0,0,0,.7); color:#fff; padding:8px 16px; border-radius:6px; font-size:13px; z-index:5;
+  }
+
+  /* モバイル用ボトムシート */
+  #bottomSheet {
+    display:none; position:absolute; left:0; right:0; bottom:0; z-index:10;
+    background:#fff; border-radius:12px 12px 0 0; box-shadow:0 -2px 10px rgba(0,0,0,.2);
+    max-height:32vh; overflow-y:auto; padding:8px 10px 14px;
+  }
+  #bsFoldBtn {
+    width:100%; text-align:center; background:none; border:none; padding:4px; font-size:14px; color:#888;
+  }
+  .catRow { display:flex; flex-wrap:wrap; gap:6px; }
+  .catChip {
+    padding:6px 10px; border-radius:14px; border:1px solid #ccc; font-size:12px; cursor:pointer; white-space:nowrap;
+  }
+  .catChip.on { background:#1a73e8; border-color:#1a73e8; color:#fff; }
+
+  @media (max-width: 640px) {
+    #filterPanel { display:none; }
+    #bottomSheet { display:block; }
+  }
+
+  /* 動画パネル */
+  #videoPanel {
+    display:none; position:absolute; top:0; right:0; bottom:0; width:360px; max-width:92vw;
+    background:#000; z-index:20; box-shadow:-2px 0 10px rgba(0,0,0,.3); flex-direction:column;
+  }
+  #videoPanel.open { display:flex; }
+  #videoHeader {
+    background:#fff; padding:10px 12px; display:flex; align-items:flex-start; gap:8px;
+  }
+  #videoHeader .info { flex:1; min-width:0; }
+  #videoTitle { font-size:13px; font-weight:bold; margin:0 0 2px; line-height:1.3; }
+  #videoChannel { font-size:11px; color:#666; margin:0; }
+  #videoClose { border:none; background:none; font-size:20px; cursor:pointer; padding:0 4px; line-height:1; }
+  #videoFrameWrap { flex:1; position:relative; }
+  #videoFrameWrap iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<div id="zoom-msg">ズームインするとカメラが表示されます</div>
+
+<div id="filterPanel">
+  <h1>📹 全国ライブカメラMAP</h1>
+  <div id="catListPC"></div>
+  <div id="markerCount"></div>
+</div>
+
+<div id="bottomSheet">
+  <button id="bsFoldBtn">▽</button>
+  <div class="catRow" id="catListMobile"></div>
+  <div id="markerCountMobile" style="font-size:11px;color:#666;margin-top:6px;"></div>
+</div>
+
+<div id="videoPanel">
+  <div id="videoHeader">
+    <div class="info">
+      <p id="videoTitle"></p>
+      <p id="videoChannel"></p>
+    </div>
+    <button id="videoClose">×</button>
+  </div>
+  <div id="videoFrameWrap"><iframe id="videoFrame" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>
+</div>
+
+<script>
+var MY_API_KEY = "AIzaSyAMBPa_T_URVyJNn1lHnXjzDiEZoKPNPSw";
+var CDN_URL    = 'https://raw.githubusercontent.com/wherethereisawillthereisaway2026/livecam-map-data/main/data.json';
+
+var CATEGORIES = {
+  city:     { label: '🏙️ 街並み',   color: '#8e44ad' },
+  nature:   { label: '⛰️ 自然',     color: '#27ae60' },
+  bousai:   { label: '🌊 河川・防災', color: '#e67e22' },
+  coast:    { label: '🏖️ 海・港',    color: '#2980b9' },
+  landmark: { label: '⛩️ 観光地',    color: '#c0392b' },
+  train:    { label: '🚉 駅・鉄道',  color: '#16a085' },
+  airport:  { label: '✈️ 空港',      color: '#2c3e50' },
+  animal:   { label: '🐾 動物',      color: '#d35400' },
+  other:    { label: '📷 その他',    color: '#7f8c8d' }
+};
+
+var map;
+var markerPool = new Map();
+var allData = [];
+var filters = {};
+Object.keys(CATEGORIES).forEach(function(c) { filters[c] = true; });
+
+var savedFilters = localStorage.getItem('livecamFilters');
+if (savedFilters) {
+  try { Object.assign(filters, JSON.parse(savedFilters)); } catch (e) {}
+}
+
+function saveFilters() {
+  localStorage.setItem('livecamFilters', JSON.stringify(filters));
+}
+
+function buildCategoryUI() {
+  var pc = document.getElementById('catListPC');
+  var mobile = document.getElementById('catListMobile');
+  pc.innerHTML = '';
+  mobile.innerHTML = '';
+
+  Object.keys(CATEGORIES).forEach(function(cat) {
+    var def = CATEGORIES[cat];
+    var count = allData.filter(function(d) { return d.category === cat; }).length;
+
+    var pcBtn = document.createElement('div');
+    pcBtn.className = 'catBtn' + (filters[cat] ? ' on' : '');
+    pcBtn.innerHTML = '<span>' + def.label + '</span><span class="cnt">' + count + '</span>';
+    pcBtn.addEventListener('click', function() { toggleCategory(cat); });
+    pc.appendChild(pcBtn);
+
+    var chip = document.createElement('div');
+    chip.className = 'catChip' + (filters[cat] ? ' on' : '');
+    chip.textContent = def.label + ' ' + count;
+    chip.addEventListener('click', function() { toggleCategory(cat); });
+    mobile.appendChild(chip);
+  });
+}
+
+function toggleCategory(cat) {
+  filters[cat] = !filters[cat];
+  saveFilters();
+  buildCategoryUI();
+  renderMarkers();
+}
+
+function shouldDisplay(item) {
+  return filters[item.category] !== false;
+}
+
+function getMarkerKey(item) { return item.video_id; }
+
+function createDotIcon(color) {
+  return {
+    path: google.maps.SymbolPath.CIRCLE,
+    fillColor: color, fillOpacity: 1,
+    strokeColor: '#fff', strokeWeight: 2,
+    scale: 9
+  };
+}
+
+var SHOW_ZOOM = 5;
+
+function renderMarkers() {
+  var zoom = map.getZoom();
+  if (zoom < SHOW_ZOOM) {
+    document.getElementById('zoom-msg').style.display = 'block';
+    markerPool.forEach(function(m) { m.setMap(null); });
+    updateMarkerCount(0);
+    return;
+  }
+  document.getElementById('zoom-msg').style.display = 'none';
+
+  var bounds = map.getBounds();
+  if (!bounds) return;
+
+  var shouldShow = new Set();
+  var dataIndex = new Map();
+  allData.forEach(function(item) {
+    var key = getMarkerKey(item);
+    dataIndex.set(key, item);
+    if (!shouldDisplay(item)) return;
+    if (!item.lat || !item.lng) return;
+    if (!bounds.contains({ lat: item.lat, lng: item.lng })) return;
+    shouldShow.add(key);
+  });
+
+  markerPool.forEach(function(m, key) {
+    if (shouldShow.has(key)) { if (!m.getMap()) m.setMap(map); }
+    else { if (m.getMap()) m.setMap(null); }
+  });
+
+  var visibleCount = 0;
+  shouldShow.forEach(function(key) {
+    if (!markerPool.has(key)) {
+      var item = dataIndex.get(key);
+      if (item) _createMarker(item);
+    }
+    visibleCount++;
+  });
+
+  updateMarkerCount(visibleCount);
+}
+
+function _createMarker(item) {
+  var def = CATEGORIES[item.category] || CATEGORIES.other;
+  var marker = new google.maps.Marker({
+    position: { lat: item.lat, lng: item.lng },
+    map: map,
+    title: item.name,
+    icon: createDotIcon(def.color)
+  });
+  marker._item = item;
+  marker.addListener('click', function() { openVideo(item); });
+  markerPool.set(getMarkerKey(item), marker);
+}
+
+function updateMarkerCount(n) {
+  var text = n + ' 件のライブカメラ';
+  document.getElementById('markerCount').textContent = text;
+  document.getElementById('markerCountMobile').textContent = text;
+}
+
+function openVideo(item) {
+  document.getElementById('videoTitle').textContent = item.name;
+  document.getElementById('videoChannel').textContent = item.channel_title + (item.pref ? '  ・  ' + item.pref : '');
+  document.getElementById('videoFrame').src = 'https://www.youtube.com/embed/' + item.video_id + '?autoplay=1&mute=1';
+  document.getElementById('videoPanel').classList.add('open');
+}
+
+document.getElementById('videoClose').addEventListener('click', function() {
+  document.getElementById('videoPanel').classList.remove('open');
+  document.getElementById('videoFrame').src = '';
+});
+
+document.getElementById('bsFoldBtn').addEventListener('click', function() {
+  var sheet = document.getElementById('bottomSheet');
+  var btn = document.getElementById('bsFoldBtn');
+  if (sheet.style.maxHeight === '44px') {
+    sheet.style.maxHeight = '';
+    btn.textContent = '▽';
+  } else {
+    sheet.style.maxHeight = '44px';
+    btn.textContent = '△';
+  }
+});
+
+function initMap() {
+  var savedLat = localStorage.getItem('livecamLat');
+  var savedLng = localStorage.getItem('livecamLng');
+  var savedZoom = localStorage.getItem('livecamZoom');
+
+  map = new google.maps.Map(document.getElementById('map'), {
+    center: { lat: savedLat ? parseFloat(savedLat) : 36.5, lng: savedLng ? parseFloat(savedLng) : 137.5 },
+    zoom: savedZoom ? parseInt(savedZoom) : 6,
+    mapTypeControl: false,
+    streetViewControl: false,
+    fullscreenControl: false
+  });
+
+  var idleTimer = null;
+  map.addListener('idle', function() {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(function() {
+      renderMarkers();
+      var c = map.getCenter();
+      localStorage.setItem('livecamLat', c.lat());
+      localStorage.setItem('livecamLng', c.lng());
+      localStorage.setItem('livecamZoom', map.getZoom());
+    }, 150);
+  });
+
+  fetch(CDN_URL + '?t=' + Date.now())
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      allData = data.filter(function(d) { return d.lat && d.lng; });
+      buildCategoryUI();
+      renderMarkers();
+    })
+    .catch(function(e) { console.error('データ取得エラー', e); });
+}
+
+window.addEventListener('load', function() {
+  var script = document.createElement('script');
+  script.src = 'https://maps.googleapis.com/maps/api/js?key=' + MY_API_KEY;
+  script.onload = initMap;
+  document.head.appendChild(script);
+});
+</script>
+</body>
+</html>
