@@ -62,6 +62,10 @@
   #videoClose { border:none; background:none; font-size:20px; cursor:pointer; padding:0 4px; line-height:1; }
   #videoFrameWrap { flex:1; position:relative; }
   #videoFrameWrap iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+  #videoExternalLink {
+    display:block; text-align:center; padding:8px; background:#fff; color:#1a73e8;
+    font-size:12px; text-decoration:none; border-top:1px solid #eee;
+  }
 </style>
 </head>
 <body>
@@ -90,6 +94,7 @@
     <button id="videoClose">×</button>
   </div>
   <div id="videoFrameWrap"><iframe id="videoFrame" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>
+  <a id="videoExternalLink" href="#" target="_blank" rel="noopener">▶ YouTubeで見る（埋め込み再生できない場合はこちら）</a>
 </div>
 
 <script>
@@ -236,11 +241,15 @@ function openVideo(item) {
   document.getElementById('videoChannel').textContent = item.channel_title + (item.pref ? '  ・  ' + item.pref : '');
 
   var sourceType = item.source_type || 'youtube';
+  var extLink = document.getElementById('videoExternalLink');
   if (sourceType === 'youtube') {
     document.getElementById('videoFrame').src = 'https://www.youtube.com/embed/' + item.video_id + '?autoplay=1&mute=1';
+    extLink.href = 'https://www.youtube.com/watch?v=' + item.video_id;
+    extLink.style.display = 'block';
   } else {
     // 静止画等の非YouTubeソースは今後対応（現状はYouTube埋め込みのみ実装済み）
     document.getElementById('videoFrame').src = '';
+    extLink.style.display = 'none';
   }
   document.getElementById('videoPanel').classList.add('open');
 }
