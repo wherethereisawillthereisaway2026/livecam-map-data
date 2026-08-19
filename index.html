@@ -47,24 +47,32 @@
     #bottomSheet { display:block; }
   }
 
-  /* 動画パネル */
+  /* 動画モーダル（中央表示・背景クリックで閉じる） */
   #videoPanel {
-    display:none; position:absolute; top:0; right:0; bottom:0; width:360px; max-width:92vw;
-    background:#000; z-index:20; box-shadow:-2px 0 10px rgba(0,0,0,.3); flex-direction:column;
+    display:none; position:fixed; inset:0; z-index:20;
+    background:rgba(0,0,0,.6); align-items:center; justify-content:center;
   }
   #videoPanel.open { display:flex; }
+  #videoModalBox {
+    background:#000; width:70vw; max-width:900px; height:70vh; max-height:640px;
+    border-radius:8px; overflow:hidden; display:flex; flex-direction:column;
+    box-shadow:0 8px 30px rgba(0,0,0,.5);
+  }
   #videoHeader {
     background:#fff; padding:10px 12px; display:flex; align-items:flex-start; gap:8px;
   }
   #videoHeader .info { flex:1; min-width:0; }
-  #videoTitle { font-size:13px; font-weight:bold; margin:0 0 2px; line-height:1.3; }
-  #videoChannel { font-size:11px; color:#666; margin:0; }
-  #videoClose { border:none; background:none; font-size:20px; cursor:pointer; padding:0 4px; line-height:1; }
+  #videoTitle { font-size:14px; font-weight:bold; margin:0 0 2px; line-height:1.3; }
+  #videoChannel { font-size:12px; color:#666; margin:0; }
+  #videoClose { border:none; background:none; font-size:22px; cursor:pointer; padding:0 4px; line-height:1; }
   #videoFrameWrap { flex:1; position:relative; }
   #videoFrameWrap iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
   #videoExternalLink {
     display:block; text-align:center; padding:8px; background:#fff; color:#1a73e8;
     font-size:12px; text-decoration:none; border-top:1px solid #eee;
+  }
+  @media (max-width: 640px) {
+    #videoModalBox { width:94vw; height:56vh; }
   }
 </style>
 </head>
@@ -86,15 +94,17 @@
 </div>
 
 <div id="videoPanel">
-  <div id="videoHeader">
-    <div class="info">
-      <p id="videoTitle"></p>
-      <p id="videoChannel"></p>
+  <div id="videoModalBox">
+    <div id="videoHeader">
+      <div class="info">
+        <p id="videoTitle"></p>
+        <p id="videoChannel"></p>
+      </div>
+      <button id="videoClose">×</button>
     </div>
-    <button id="videoClose">×</button>
+    <div id="videoFrameWrap"><iframe id="videoFrame" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>
+    <a id="videoExternalLink" href="#" target="_blank" rel="noopener">▶ YouTubeで見る（埋め込み再生できない場合はこちら）</a>
   </div>
-  <div id="videoFrameWrap"><iframe id="videoFrame" allow="autoplay; encrypted-media" allowfullscreen></iframe></div>
-  <a id="videoExternalLink" href="#" target="_blank" rel="noopener">▶ YouTubeで見る（埋め込み再生できない場合はこちら）</a>
 </div>
 
 <script>
@@ -114,6 +124,7 @@ var CATEGORIES = {
 };
 
 var map;
+var hoverInfoWindow;
 var markerPool = new Map();
 var allData = [];
 var filters = {};
@@ -217,6 +228,12 @@ function renderMarkers() {
   updateMarkerCount(visibleCount);
 }
 
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, function(c) {
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
 function _createMarker(item) {
   var def = CATEGORIES[item.category] || CATEGORIES.other;
   var marker = new google.maps.Marker({
@@ -227,6 +244,16 @@ function _createMarker(item) {
   });
   marker._item = item;
   marker.addListener('click', function() { openVideo(item); });
+  marker.addListener('mouseover', function() {
+    hoverInfoWindow.setContent(
+      '<div style="font-size:12px;line-height:1.6;padding:2px 2px;max-width:220px;">' +
+      '<strong>' + escapeHtml(item.name) + '</strong><br>' +
+      escapeHtml(def.label) + (item.pref ? '　' + escapeHtml(item.pref) : '') +
+      '</div>'
+    );
+    hoverInfoWindow.open(map, marker);
+  });
+  marker.addListener('mouseout', function() { hoverInfoWindow.close(); });
   markerPool.set(getMarkerKey(item), marker);
 }
 
@@ -259,9 +286,13 @@ function openVideo(item) {
   document.getElementById('videoPanel').classList.add('open');
 }
 
-document.getElementById('videoClose').addEventListener('click', function() {
+function closeVideo() {
   document.getElementById('videoPanel').classList.remove('open');
   document.getElementById('videoFrame').src = '';
+}
+document.getElementById('videoClose').addEventListener('click', closeVideo);
+document.getElementById('videoPanel').addEventListener('click', function(e) {
+  if (e.target === this) closeVideo(); // 背景（動画以外）クリックで閉じる
 });
 
 document.getElementById('bsFoldBtn').addEventListener('click', function() {
@@ -288,6 +319,7 @@ function initMap() {
     streetViewControl: false,
     fullscreenControl: false
   });
+  hoverInfoWindow = new google.maps.InfoWindow({ disableAutoPan: true });
 
   var idleTimer = null;
   map.addListener('idle', function() {
