@@ -243,9 +243,14 @@ function openVideo(item) {
   var sourceType = item.source_type || 'youtube';
   var extLink = document.getElementById('videoExternalLink');
   if (sourceType === 'youtube') {
-    document.getElementById('videoFrame').src = 'https://www.youtube.com/embed/' + item.video_id + '?autoplay=1&mute=1';
     extLink.href = 'https://www.youtube.com/watch?v=' + item.video_id;
     extLink.style.display = 'block';
+    if (item.embeddable === false) {
+      // 埋め込み不可と分かっている動画はiframeを試さずフォールバックのみ表示
+      document.getElementById('videoFrame').src = '';
+    } else {
+      document.getElementById('videoFrame').src = 'https://www.youtube.com/embed/' + item.video_id + '?autoplay=1&mute=1';
+    }
   } else {
     // 静止画等の非YouTubeソースは今後対応（現状はYouTube埋め込みのみ実装済み）
     document.getElementById('videoFrame').src = '';
